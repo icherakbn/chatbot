@@ -1,0 +1,32 @@
+services:
+  rag-fastapi:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - rag-postgres
+    environment:
+      - DATABASE_URL=postgresql://postgres:mysecret@rag-postgres:5432/postgres
+    networks:
+      - rag-network
+
+  rag-postgres:
+    image: postgres:14-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecret
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - rag-db-data:/var/lib/postgresql/data
+    networks:
+      - rag-network
+
+volumes:
+  rag-db-data: {}
+
+networks:
+  rag-network:
+    driver: bridge

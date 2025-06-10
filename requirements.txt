@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+rank_bm25
+psycopg2-binary
+transformers
+sentence-transformers
+qdrant-client
+wikipedia-api
+datasets
