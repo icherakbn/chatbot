@@ -4,7 +4,7 @@ conn = psycopg2.connect(
     dbname="postgres",
     user="postgres",
     password="mysecret",
-    host="rag-postgres",   # ✅ FIXED
+    host="172.18.0.2",   
     port="5432"
 )
 
