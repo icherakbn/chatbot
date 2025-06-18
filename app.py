@@ -18,7 +18,19 @@ from qdrant_client.http.models import VectorParams, Distance
 from rank_bm25 import BM25Okapi
 import time
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
+from fastapi import FastAPI, HTTPException
+
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Ensure that the root logger is also set to debug level to capture all logs
+logging.getLogger().setLevel(logging.DEBUG)
+
+# ----------- FastAPI app ------------
 app = FastAPI()
 
 app.add_middleware(
@@ -39,7 +51,7 @@ def save_chat_to_db(session_id: uuid.UUID, user_message: str, assistant_message:
             dbname="postgres",
             user="postgres",
             password="mysecret",   # Or 'Cmc@2023' depending on what you're using
-            host="rag-postgres",   # Use 'rag-postgres' if calling from inside Docker
+            host="172.18.0.2",   # Use the IP address instead of the hostname
             port="5432"
         )
 
@@ -55,7 +67,7 @@ def save_chat_to_db(session_id: uuid.UUID, user_message: str, assistant_message:
         conn.close()
 
     except Exception as e:
-        print(f"❌ Failed to save chat to DB: {e}")
+        print(f" Failed to save chat to DB: {e}")
 
 
 from pydantic import BaseModel
@@ -71,44 +83,65 @@ def save_chat(msg: ChatMessage):
     save_chat_to_db(msg.session_id, msg.user_message, msg.assistant_message)
     return {"status": "success"}
 
+@app.get("/test")
+def test_endpoint():
+    return {"status": "success"}
+
+
+# ----------- Database Connection and Chat History Retrieval ------------
+def get_chat_history_from_db(session_id: uuid.UUID):
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user="postgres",
+        password="mysecret",
+        host="172.18.0.2",  # IP of the PostgreSQL container
+        port="5432"
+    )
+    cursor = conn.cursor()
+
+    query = "SELECT user_message, assistant_message, created_at FROM chat_history WHERE session_id = %s ORDER BY created_at"
+    cursor.execute(query, (session_id,))
+    history = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return history
+
 
 @app.get("/history/{session_id}")
 def get_chat_history(session_id: uuid.UUID):
     try:
-        conn = psycopg2.connect(
-            dbname="postgres",
-            user="postgres",
-            password="mysecret",  # Your DB password
-            host="rag-postgres",  # Docker host
-            port="5432"
-        )
+        # Log the session_id parameter to confirm it's received correctly
+        logger.debug(f"DEBUG: Entering /history endpoint with session_id: {session_id}")
 
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT user_message, assistant_message, created_at FROM chat_history WHERE session_id = %s ORDER BY created_at",
-            (str(session_id),)  # <-- convert to string
-        )
-        history = cursor.fetchall()
-        
-        # Convert datetime to string for JSON serialization
+        # Fetch chat history from the database
+        history = get_chat_history_from_db(session_id)
+
+        # If no results are found, raise an HTTP exception with a 404 error
+        if not history:
+            logger.error(f"No chat history found for session_id: {session_id}")
+            raise HTTPException(status_code=404, detail="Chat history not found")
+
+        # Format the results as a list of dictionaries, ensuring proper date formatting
         chat_history = [
-            [user, assistant, created_at.isoformat() if created_at else None]
+            {"user_message": user,
+             "assistant_message": assistant,
+             "created_at": created_at.isoformat() if created_at else None}
             for user, assistant, created_at in history
         ]
 
-        conn.commit()
-        cursor.close()
-        conn.close()
-
+        logger.debug(f"DEBUG: Returning chat history: {chat_history}")
         return {"chat_history": chat_history}
 
+    except psycopg2.Error as db_error:
+        logger.error(f"Database error: {db_error}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
     except Exception as e:
-        import traceback
-        print(f"❌ Failed to retrieve chat history: {e}")
-        traceback.print_exc()  # <-- Add this line
-        return {"error": "Failed to retrieve chat history"}
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
+# ----------- Request and Response Models ------------
 class QueryRequest(BaseModel):
     query: str
 
